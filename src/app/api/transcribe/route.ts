@@ -59,8 +59,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       transcript,
       confidence: result.results.channels[0].alternatives[0].confidence,
-      duration: result.metadata?.duration,
-      language: result.metadata?.language
+      duration: result.metadata?.duration
     });
 
   } catch (err) {
