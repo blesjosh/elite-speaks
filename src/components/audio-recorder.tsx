@@ -17,6 +17,12 @@ interface AudioRecorderProps {
   topic?: string;
 }
 
+const checkBrowserCompatibility = () => {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('Your browser does not support audio recording. Please try using a modern browser like Chrome, Firefox, or Edge.');
+  }
+};
+
 export function AudioRecorder({ 
   onRecordingComplete, 
   onCancel, 
@@ -80,9 +86,23 @@ export function AudioRecorder({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const checkMicrophonePermission = async () => {
+    try {
+      const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+      if (result.state === 'denied') {
+        throw new Error('Microphone access is blocked. Please allow microphone access in your browser settings and try again.');
+      }
+    } catch (err) {
+      // If the permissions API isn't supported, we'll try getUserMedia directly
+      console.log('Permissions API not supported, will try getUserMedia directly');
+    }
+  };
+
   const startRecording = async () => {
     try {
       setError(null);
+      checkBrowserCompatibility();
+      await checkMicrophonePermission();
       audioChunksRef.current = [];
       
       if (audioUrl) {
@@ -91,24 +111,59 @@ export function AudioRecorder({
         setAudioBlob(null);
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      console.log('Requesting microphone access...');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      });
+      
+      console.log('Microphone access granted, creating MediaRecorder...');
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
+      });
+      
+      mediaRecorder.onerror = (event) => {
+        console.error('MediaRecorder error:', event);
+        setError('Recording failed. Please try again.');
+        stopRecording();
+      };
+
+      mediaRecorder.onstart = () => {
+        console.log('Recording started successfully');
+        setError(null);
+      };
       
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
+          console.log(`Received ${event.data.size} bytes of audio data`);
           audioChunksRef.current.push(event.data);
         }
       };
       
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
-        setAudioBlob(audioBlob);
-        setAudioUrl(url);
-        setIsRecording(false);
-        
-        // Stop all tracks in the stream
-        stream.getTracks().forEach(track => track.stop());
+        try {
+          console.log('Recording stopped, processing audio...');
+          const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
+          console.log(`Created audio blob of size ${audioBlob.size} bytes`);
+          
+          if (audioBlob.size === 0) {
+            throw new Error('No audio data was recorded');
+          }
+          
+          const url = URL.createObjectURL(audioBlob);
+          setAudioBlob(audioBlob);
+          setAudioUrl(url);
+          setIsRecording(false);
+            
+          // Stop all tracks in the stream
+          stream.getTracks().forEach(track => track.stop());
+        } catch (err: any) {
+          console.error('Error processing recording:', err);
+          setError('Failed to process recording. Please try again.');
+        }
       };
       
       mediaRecorderRef.current = mediaRecorder;
@@ -225,13 +280,134 @@ export function AudioRecorder({
     }
   };
 
+  const handleStartRecording = async () => {
+    setError(null);
+    try {
+      await checkMicrophonePermission();
+      checkBrowserCompatibility();
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+
+      mediaRecorderRef.current.addEventListener('dataavailable', (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      });
+
+      mediaRecorderRef.current.addEventListener('stop', () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const url = URL.createObjectURL(audioBlob);
+        setAudioBlob(audioBlob);
+        setAudioUrl(url);
+        audioChunksRef.current = [];
+      });
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      setIsPaused(false);
+
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setRecordingTime((prevTime) => prevTime + 1);
+      }, 1000);
+
+    } catch (err) {
+      console.error('Recording error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to start recording');
+    }
+  };
+
+  const handleStopRecording = async () => {
+    try {
+      if (!mediaRecorderRef.current) {
+        throw new Error('No active recording');
+      }
+
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+
+      setIsRecording(false);
+      setIsPaused(false);
+
+      // Wait for the 'stop' event to process the audio
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      if (!audioBlob || !audioUrl) {
+        throw new Error('Recording failed to save');
+      }
+
+      onRecordingComplete(audioBlob, audioUrl, recordingTopic);
+      
+    } catch (err) {
+      console.error('Stop recording error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to stop recording');
+    }
+  };
+
+  const handleCancelRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    }
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    setIsRecording(false);
+    setIsPaused(false);
+    setRecordingTime(0);
+    setAudioBlob(null);
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      setAudioUrl(null);
+    }
+
+    if (onCancel) {
+      onCancel();
+    }
+  };
+
+  const RecordingStatus = () => {
+    if (error) {
+      return (
+        <div className="flex items-center gap-2 text-red-500">
+          <AlertCircle className="h-4 w-4" />
+          <span>{error}</span>
+        </div>
+      );
+    }
+
+    if (isRecording) {
+      return (
+        <div className="flex items-center gap-2">
+          <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+          <span>Recording... {formatTime(recordingTime)}</span>
+        </div>
+      );
+    }
+
+    if (audioUrl) {
+      return (
+        <div className="flex items-center gap-2 text-green-500">
+          <span>Recording saved - {formatTime(recordingTime)}</span>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <div className={`flex flex-col items-center p-4 border rounded-lg bg-white shadow-sm ${className}`}>
-      {error && (
-        <div className="mb-4 p-3 text-sm text-red-500 bg-red-50 border border-red-200 rounded-md w-full">
-          {error}
-        </div>
-      )}
+      <RecordingStatus />
       
       <div className="flex flex-col items-center w-full">
         {/* Daily Topic Display */}

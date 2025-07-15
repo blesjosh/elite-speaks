@@ -34,16 +34,22 @@ export default function LoginPage() {
     }
 
     const handleGoogleSignIn = async () => {
-        setLoading(true)
-        setError('')
-        
-        const { error } = await signInWithGoogle()
-        
-        if (error) {
-            setError(error.message)
+        try {
+            setLoading(true)
+            setError('')
+            
+            const { error } = await signInWithGoogle()
+            
+            if (error) {
+                console.error('Google sign-in error:', error)
+                setError('Failed to sign in with Google. Please try again.')
+            }
+        } catch (err) {
+            console.error('Google sign-in failed:', err)
+            setError('An unexpected error occurred. Please try again.')
+        } finally {
+            setLoading(false)
         }
-        
-        setLoading(false)
     }
 
     return (

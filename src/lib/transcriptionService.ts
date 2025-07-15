@@ -33,12 +33,14 @@ export async function transcribeAudio(fileUrl: string): Promise<TranscriptionRes
   try {
     console.log('Starting transcription for:', fileUrl);
 
-    // First, fetch the audio file from Supabase
+    // First, fetch the audio file from Supabase with proper headers
     const audioResponse = await fetch(fileUrl, {
       method: 'GET',
       headers: {
         'Accept': '*/*',
+        'Cache-Control': 'no-cache',
       },
+      cache: 'no-store',
     });
     
     if (!audioResponse.ok) {
@@ -70,11 +72,15 @@ export async function transcribeAudio(fileUrl: string): Promise<TranscriptionRes
 
     console.log('Sending audio to transcription API...');
 
-    // Send to the FastAPI transcription endpoint
-    const transcriptionResponse = await fetch('https://whisper-api-cpp-5.onrender.com/transcribe', {
+    // Send to our Next.js API route that uses Deepgram
+    const transcriptionResponse = await fetch('/api/transcribe', {
       method: 'POST',
-      body: formData,
-      // Don't set Content-Type header - let browser set it with boundary for FormData
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        audioUrl: fileUrl
+      }),
     });
 
     if (!transcriptionResponse.ok) {

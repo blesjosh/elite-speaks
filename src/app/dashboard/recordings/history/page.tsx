@@ -64,6 +64,22 @@ export default function RecordingHistory() {
     }
   }, [user, loading, router])
 
+  const parseAiFeedback = (feedback: any) => {
+    if (!feedback) return null;
+    
+    try {
+      // If it's a string, try to parse it
+      if (typeof feedback === 'string') {
+        return JSON.parse(feedback);
+      }
+      // If it's already an object, return as is
+      return feedback;
+    } catch (e) {
+      console.error('Error parsing AI feedback:', e);
+      return null;
+    }
+  };
+
   // Function to refresh recordings data
   const fetchRecordings = async () => {
     if (!user) return
@@ -83,50 +99,16 @@ export default function RecordingHistory() {
         return
       }
 
-      console.log('Raw recordings data from Supabase:', data)
-      
       // Process the data to ensure ai_feedback is properly structured
-      const processedData = data?.map(recording => {
-        // Handle case where ai_feedback might be a string
-        if (recording.ai_feedback && typeof recording.ai_feedback === 'string') {
-          try {
-            recording.ai_feedback = JSON.parse(recording.ai_feedback);
-            console.log('Parsed ai_feedback from string:', recording.id);
-          } catch (e) {
-            console.error('Error parsing ai_feedback string:', e);
-            // Keep as string if parsing fails
-          }
-        }
-        
-        // Fix missing score - if we have an evaluation with overallScore but no score field
-        if (!recording.score && recording.ai_feedback && 
-            typeof recording.ai_feedback === 'object' && 
-            recording.ai_feedback.overallScore) {
-          recording.score = parseInt(recording.ai_feedback.overallScore);
-          if (isNaN(recording.score)) recording.score = null;
-          console.log('Fixed missing score for recording:', recording.id, recording.score);
-        }
-        
-        return recording;
-      });
-      
-      // Check structure of the returned data
-      if (processedData && processedData.length > 0) {
-        console.log('First recording sample:', {
-          id: processedData[0].id,
-          created_at: processedData[0].created_at,
-          transcript: processedData[0].transcript ? processedData[0].transcript.substring(0, 50) + '...' : 'No transcript',
-          audio_url: processedData[0].audio_url || 'No audio URL',
-          score: processedData[0].score,
-          ai_feedback_type: processedData[0].ai_feedback ? typeof processedData[0].ai_feedback : 'none',
-          ai_feedback_keys: processedData[0].ai_feedback && typeof processedData[0].ai_feedback === 'object' 
-            ? Object.keys(processedData[0].ai_feedback) : []
-        })
-      }
+      const processedData = data?.map(recording => ({
+        ...recording,
+        ai_feedback: parseAiFeedback(recording.ai_feedback)
+      }));
 
       setRecordings(processedData || [])
-    } catch (error) {
-      console.error('Error fetching recordings:', error)
+      console.log('Processed recordings data:', processedData);
+    } catch (err) {
+      console.error('Error in fetchRecordings:', err)
     } finally {
       setIsLoading(false)
     }

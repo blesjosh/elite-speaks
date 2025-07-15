@@ -15,15 +15,20 @@ export async function POST(request: NextRequest) {
   const deepgram: DeepgramClient = createClient(deepgramApiKey);
 
   try {
-    const formData = await request.formData();
-    const file = formData.get("audio") as File | null;
+    const { audioUrl } = await request.json();
 
-    if (!file) {
-      return NextResponse.json({ error: "No audio file provided" }, { status: 400 });
+    if (!audioUrl) {
+      return NextResponse.json({ error: "No audio URL provided" }, { status: 400 });
     }
 
-    // Convert file to buffer
-    const buffer = Buffer.from(await file.arrayBuffer());
+    // Fetch the audio from the URL
+    const audioResponse = await fetch(audioUrl);
+    if (!audioResponse.ok) {
+      throw new Error(`Failed to fetch audio file: ${audioResponse.statusText}`);
+    }
+
+    // Get the audio data as a buffer
+    const buffer = Buffer.from(await audioResponse.arrayBuffer());
 
     const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
       buffer,
@@ -44,10 +49,29 @@ export async function POST(request: NextRequest) {
     console.log("Deepgram API result structure:", 
       Object.keys(result || {}).join(", "));
 
-    return NextResponse.json(result);
+    // Extract just the transcript from the result
+    if (!result?.results?.channels?.[0]?.alternatives?.[0]) {
+      throw new Error('No transcription result found in response');
+    }
+
+    const transcript = result.results.channels[0].alternatives[0].transcript;
+    
+    return NextResponse.json({
+      transcript,
+      confidence: result.results.channels[0].alternatives[0].confidence,
+      duration: result.metadata?.duration,
+      language: result.metadata?.language
+    });
 
   } catch (err) {
     console.error("Transcription error:", err);
+    return NextResponse.json(
+      { 
+        error: err instanceof Error ? err.message : "Failed to transcribe audio",
+        details: err
+      },
+      { status: 500 }
+    );
     return NextResponse.json(
       { error: "An unexpected error occurred" },
       { status: 500 }
