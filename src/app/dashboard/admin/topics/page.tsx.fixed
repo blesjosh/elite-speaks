@@ -1,0 +1,83 @@
+'use client'
+
+import React, { useState, useEffect } from 'react'
+import { useAuth } from '@/lib/auth-context'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { AlertCircle } from 'lucide-react'
+
+export default function AdminTopicsPage() {
+  const { user, loading, isAdmin } = useAuth()
+  const router = useRouter()
+  const [isLoading, setIsLoading] = useState(true)
+  
+  useEffect(() => {
+    if (!loading) {
+      if (!user) {
+        router.push('/login')
+      } else if (!isAdmin) {
+        router.push('/dashboard')
+      } else {
+        setIsLoading(false)
+      }
+    }
+  }, [user, loading, isAdmin, router])
+
+  if (loading || isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+          <p className="mt-4">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-6">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
+                Admin Dashboard
+              </h1>
+              <p className="text-gray-600">Manage speaking topics</p>
+            </div>
+            <div className="flex items-center gap-4">
+              <Button onClick={() => router.push('/dashboard')}>
+                Back to Dashboard
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div className="px-4 py-6 sm:px-0">
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-12">
+              <div className="bg-gray-100 p-3 rounded-full">
+                <AlertCircle className="h-8 w-8 text-gray-400" />
+              </div>
+              <h3 className="mt-4 text-lg font-medium">Working on topic management</h3>
+              <p className="mt-2 text-sm text-gray-500">
+                We're fixing the topic management interface. Please check back soon.
+              </p>
+              <Button 
+                className="mt-4" 
+                onClick={() => router.push('/dashboard')}
+              >
+                Return to Dashboard
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    </div>
+  )
+}

@@ -1,0 +1,57 @@
+'use client'
+
+import { useAuth } from '@/lib/auth-context'
+import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
+import { Button } from '@/components/ui/button'
+import Link from 'next/link'
+
+export default function Dashboard() {
+  const { user, loading, signOut } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/login')
+    }
+  }, [user, loading, router])
+
+  const handleSignOut = async () => {
+    await signOut()
+    router.push('/')
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+          <p className="mt-4">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return null
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center">
+      <div className="bg-white shadow-md rounded-lg p-8 max-w-md w-full text-center">
+        <h1 className="text-3xl font-bold text-gray-900 mb-4">Hello, World!</h1>
+        <p className="text-lg text-gray-600 mb-6">Welcome to Elite Speaks, {user.email}</p>
+        
+        <div className="space-y-3">
+          <Link href="/dashboard/recordings">
+            <Button className="w-full">Go to Recordings</Button>
+          </Link>
+          
+          <Button onClick={handleSignOut} variant="outline" className="w-full">
+            Sign Out
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
