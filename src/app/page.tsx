@@ -28,11 +28,11 @@ export default function Home() {
       </StarsBackground>
 
       {/* Other sections */}
-      <section className="py-20 px-4 md:px-12 lg:px-24">
+      <section id="features" className="py-20 px-4 md:px-12 lg:px-24">
         <Features />
       </section>
 
-      <section className="py-20 px-4 md:px-12 lg:px-24 bg-gray-50">
+      <section id="why-elite-speaks" className="py-20 px-4 md:px-12 lg:px-24 bg-gray-50">
         <WhyEliteSpeaks />
       </section>
 

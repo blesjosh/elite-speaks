@@ -15,9 +15,9 @@ import { useEffect } from 'react'
 import { SwiperComponent } from './ui/swiper'
 
 const menuItems = [
-    { name: 'Features', href: '#' },
-    { name: 'Why Elite-speaks', href: '#' },
-    { name: 'About', href: '#' },
+    { name: 'Features', href: '#features' },
+    { name: 'Why Elite-speaks', href: '#why-elite-speaks' },
+    { name: 'About', href: '#about' },
 ]
 
 export default function HeroSection() {
