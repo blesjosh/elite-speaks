@@ -11,10 +11,9 @@ import { Label } from '@/components/ui/label';
 import { topicsService, Topic } from '@/lib/topicsService';
 
 interface AudioRecorderProps {
-  onRecordingComplete: (audioBlob: Blob, audioUrl: string, topic?: string) => void;
-  onCancel?: () => void;
+  onRecordingComplete: (blob: Blob) => void;
   className?: string;
-  topic?: string;
+  disabled?: boolean;
 }
 
 const checkBrowserCompatibility = () => {
@@ -25,9 +24,8 @@ const checkBrowserCompatibility = () => {
 
 export function AudioRecorder({ 
   onRecordingComplete, 
-  onCancel, 
   className = '',
-  topic = ''
+  disabled = false
 }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -38,9 +36,6 @@ export function AudioRecorder({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [recordingTopic, setRecordingTopic] = useState(topic || '');
-  const [activeTopic, setActiveTopic] = useState<Topic | null>(null);
-  const [isLoadingTopic, setIsLoadingTopic] = useState(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -48,26 +43,7 @@ export function AudioRecorder({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const { user } = useAuth();
 
-  // Fetch the current active topic when component loads
-  useEffect(() => {
-    const fetchActiveTopic = async () => {
-      setIsLoadingTopic(true);
-      try {
-        const topic = await topicsService.getActiveTopic();
-        setActiveTopic(topic);
-        if (topic) {
-          setRecordingTopic(topic.title);
-        }
-      } catch (error) {
-        console.error('Error fetching active topic:', error);
-      } finally {
-        setIsLoadingTopic(false);
-      }
-    };
-    
-    fetchActiveTopic();
-  }, []);
-
+  // No need to fetch topic here, it's a presentation component
   useEffect(() => {
     return () => {
       // Cleanup on unmount
@@ -99,487 +75,143 @@ export function AudioRecorder({
   };
 
   const startRecording = async () => {
+    setError(null);
     try {
-      setError(null);
       checkBrowserCompatibility();
       await checkMicrophonePermission();
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
       audioChunksRef.current = [];
-      
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-        setAudioUrl(null);
-        setAudioBlob(null);
-      }
 
-      console.log('Requesting microphone access...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
-      });
-      
-      console.log('Microphone access granted, creating MediaRecorder...');
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
-      });
-      
-      mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorder error:', event);
-        setError('Recording failed. Please try again.');
-        stopRecording();
-      };
-
-      mediaRecorder.onstart = () => {
-        console.log('Recording started successfully');
-        setError(null);
-      };
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          console.log(`Received ${event.data.size} bytes of audio data`);
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
-      
-      mediaRecorder.onstop = () => {
-        try {
-          console.log('Recording stopped, processing audio...');
-          const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-          console.log(`Created audio blob of size ${audioBlob.size} bytes`);
-          
-          if (audioBlob.size === 0) {
-            throw new Error('No audio data was recorded');
-          }
-          
-          const url = URL.createObjectURL(audioBlob);
-          setAudioBlob(audioBlob);
-          setAudioUrl(url);
-          setIsRecording(false);
-            
-          // Stop all tracks in the stream
-          stream.getTracks().forEach(track => track.stop());
-        } catch (err: any) {
-          console.error('Error processing recording:', err);
-          setError('Failed to process recording. Please try again.');
-        }
+
+      mediaRecorderRef.current.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        setAudioBlob(audioBlob);
+        setAudioUrl(audioUrl);
+        onRecordingComplete(audioBlob);
       };
-      
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(100); // Collect data every 100ms
-      
+
+      mediaRecorderRef.current.start();
       setIsRecording(true);
       setRecordingTime(0);
-      
-      // Start timer
       timerRef.current = setInterval(() => {
-        setRecordingTime(prevTime => prevTime + 1);
+        setRecordingTime((prevTime) => prevTime + 1);
       }, 1000);
-
     } catch (err: any) {
-      console.error('Error starting recording:', err);
-      setError(err.message || 'Failed to access microphone');
+      console.error('Failed to start recording:', err);
+      setError(err.message || 'Could not start recording. Please check microphone permissions.');
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      
-      // Clear the timer
+      setIsRecording(false);
       if (timerRef.current) {
         clearInterval(timerRef.current);
-        timerRef.current = null;
+      }
+      // Stop all media tracks
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    }
+  };
+
+  const togglePauseResume = () => {
+    if (mediaRecorderRef.current) {
+      if (isPaused) {
+        mediaRecorderRef.current.resume();
+        setIsPaused(false);
+        timerRef.current = setInterval(() => {
+          setRecordingTime((prevTime) => prevTime + 1);
+        }, 1000);
+      } else {
+        mediaRecorderRef.current.pause();
+        setIsPaused(true);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+        }
       }
     }
   };
 
-  const deleteRecording = () => {
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-    }
-    setAudioUrl(null);
+  const handleCancel = () => {
+    stopRecording();
     setAudioBlob(null);
+    setAudioUrl(null);
     setRecordingTime(0);
+    setIsPaused(false);
+    setError(null);
   };
 
-  const playRecording = () => {
-    if (audioRef.current && audioUrl) {
+  const togglePlay = () => {
+    if (audioRef.current) {
       if (isPlaying) {
         audioRef.current.pause();
-        setIsPlaying(false);
       } else {
         audioRef.current.play();
-        setIsPlaying(true);
       }
+      setIsPlaying(!isPlaying);
     }
-  };
-
-  const handleAudioEnd = () => {
-    setIsPlaying(false);
-  };
-
-  const uploadToSupabase = async () => {
-    if (!audioBlob || !user) {
-      return null;
-    }
-    
-    setIsUploading(true);
-    setUploadProgress(0);
-    
-    try {
-      const fileExt = 'webm';
-      const fileName = `${uuidv4()}-recording.${fileExt}`;
-      const filePath = `recordings/${user.id}/${fileName}`;
-      
-      // Start upload to Supabase Storage
-      const { data, error } = await supabase
-        .storage
-        .from('recordings')
-        .upload(filePath, audioBlob, {
-          contentType: 'audio/webm',
-          upsert: false
-        });
-      
-      if (error) {
-        throw error;
-      }
-      
-      // Get the public URL
-      const { data: publicUrlData } = await supabase
-        .storage
-        .from('recordings')
-        .getPublicUrl(filePath);
-        
-      if (!publicUrlData?.publicUrl) {
-        throw new Error("Couldn't generate public URL");
-      }
-      
-      setIsUploading(false);
-      setUploadProgress(100);
-      
-      return publicUrlData.publicUrl;
-    } catch (err) {
-      console.error('Error uploading recording:', err);
-      setError(`Upload error: ${err instanceof Error ? err.message : 'Unknown error'}`);
-      setIsUploading(false);
-      return null;
-    }
-  };
-
-  const handleSaveRecording = async () => {
-    if (!audioBlob) return;
-    
-    // Upload to Supabase and get the URL
-    const uploadedUrl = await uploadToSupabase();
-    
-    if (uploadedUrl) {
-      // Pass the blob, URL and topic to the parent component
-      onRecordingComplete(audioBlob, uploadedUrl, recordingTopic);
-    }
-  };
-
-  const handleStartRecording = async () => {
-    setError(null);
-    try {
-      await checkMicrophonePermission();
-      checkBrowserCompatibility();
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-
-      mediaRecorderRef.current.addEventListener('dataavailable', (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      });
-
-      mediaRecorderRef.current.addEventListener('stop', () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
-        setAudioBlob(audioBlob);
-        setAudioUrl(url);
-        audioChunksRef.current = [];
-      });
-
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      setIsPaused(false);
-
-      // Start timer
-      timerRef.current = setInterval(() => {
-        setRecordingTime((prevTime) => prevTime + 1);
-      }, 1000);
-
-    } catch (err) {
-      console.error('Recording error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start recording');
-    }
-  };
-
-  const handleStopRecording = async () => {
-    try {
-      if (!mediaRecorderRef.current) {
-        throw new Error('No active recording');
-      }
-
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-      
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-
-      setIsRecording(false);
-      setIsPaused(false);
-
-      // Wait for the 'stop' event to process the audio
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      if (!audioBlob || !audioUrl) {
-        throw new Error('Recording failed to save');
-      }
-
-      onRecordingComplete(audioBlob, audioUrl, recordingTopic);
-      
-    } catch (err) {
-      console.error('Stop recording error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to stop recording');
-    }
-  };
-
-  const handleCancelRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-    }
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-
-    setIsRecording(false);
-    setIsPaused(false);
-    setRecordingTime(0);
-    setAudioBlob(null);
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-      setAudioUrl(null);
-    }
-
-    if (onCancel) {
-      onCancel();
-    }
-  };
-
-  const RecordingStatus = () => {
-    if (error) {
-      return (
-        <div className="flex items-center gap-2 text-red-500">
-          <AlertCircle className="h-4 w-4" />
-          <span>{error}</span>
-        </div>
-      );
-    }
-
-    if (isRecording) {
-      return (
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-          <span>Recording... {formatTime(recordingTime)}</span>
-        </div>
-      );
-    }
-
-    if (audioUrl) {
-      return (
-        <div className="flex items-center gap-2 text-green-500">
-          <span>Recording saved - {formatTime(recordingTime)}</span>
-        </div>
-      );
-    }
-
-    return null;
   };
 
   return (
-    <div className={`flex flex-col items-center p-4 border rounded-lg bg-white shadow-sm ${className}`}>
-      <RecordingStatus />
-      
-      <div className="flex flex-col items-center w-full">
-        {/* Daily Topic Display */}
-        {isLoadingTopic ? (
-          <div className="w-full mb-6 p-3 border rounded-lg bg-gray-50">
-            <div className="animate-pulse flex space-x-4">
-              <div className="flex-1 space-y-2 py-1">
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                <div className="h-3 bg-gray-200 rounded"></div>
-                <div className="h-3 bg-gray-200 rounded w-5/6"></div>
-              </div>
-            </div>
-          </div>
-        ) : activeTopic ? (
-          <div className="w-full mb-6 p-4 border rounded-lg bg-indigo-50 border-indigo-100">
-            <h3 className="font-medium text-lg text-indigo-900 mb-2">Today's Speaking Topic:</h3>
-            <p className="font-bold text-xl text-indigo-800 mb-3">{activeTopic.title}</p>
-            <p className="text-sm text-indigo-700 whitespace-pre-wrap">{activeTopic.description}</p>
-          </div>
-        ) : (
-          <div className="w-full mb-6 p-4 border rounded-lg bg-yellow-50 border-yellow-100">
-            <div className="flex items-start">
-              <AlertCircle className="h-5 w-5 text-yellow-600 mr-2 mt-0.5" />
-              <div>
-                <h4 className="text-sm font-medium text-yellow-800">No topic available</h4>
-                <p className="text-sm text-yellow-700 mt-1">
-                  Please enter your own topic below or check back later when a daily topic is available.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Topic Input */}
-        <div className="w-full mb-4">
-          <Label htmlFor="topic" className="block text-sm font-medium text-gray-700 mb-1">
-            {activeTopic ? 'Topic (pre-filled with today\'s topic)' : 'Topic (optional)'}
-          </Label>
-          <Input
-            id="topic"
-            type="text"
-            placeholder="What are you talking about?"
-            value={recordingTopic}
-            onChange={(e) => setRecordingTopic(e.target.value)}
-            className="w-full"
-            disabled={isRecording}
-          />
+    <div className={`w-full max-w-md p-4 bg-card text-card-foreground rounded-lg shadow-md ${className}`}>
+      {error && (
+        <div className="mb-4 p-3 bg-destructive/10 border border-destructive/50 text-destructive rounded-md flex items-center">
+          <AlertCircle className="h-5 w-5 mr-2" />
+          <p className="text-sm">{error}</p>
         </div>
+      )}
 
-        {/* Recording Status */}
-        <div className="mb-4 text-center">
-          {isRecording ? (
-            <>
-              <div className="flex items-center gap-2 justify-center mb-2">
-                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
-                <span className="font-medium">Recording</span>
-              </div>
-              <div className="text-2xl font-bold">{formatTime(recordingTime)}</div>
-            </>
-          ) : audioUrl ? (
-            <div className="font-medium text-green-700 mb-2">Recording ready</div>
-          ) : (
-            <div className="font-medium text-gray-600 mb-2">Ready to record</div>
-          )}
+      {!audioBlob ? (
+        <div className="flex flex-col items-center">
+          <div className="text-2xl font-mono mb-4">{formatTime(recordingTime)}</div>
+          <div className="flex items-center space-x-4">
+            <Button 
+              onClick={isRecording ? stopRecording : startRecording} 
+              variant={isRecording ? "destructive" : "default"}
+              size="icon" 
+              className="rounded-full w-16 h-16"
+              disabled={disabled}
+            >
+              {isRecording ? <Square className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+            </Button>
+            {isRecording && (
+              <Button onClick={togglePauseResume} variant="secondary" size="icon" className="rounded-full w-12 h-12">
+                {isPaused ? <Play className="h-5 w-5" /> : <Pause className="h-5 w-5" />}
+              </Button>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground mt-4">
+            {isRecording ? (isPaused ? 'Paused' : 'Recording...') : 'Click to start recording'}
+          </p>
         </div>
-        
-        {/* Audio playback */}
-        {audioUrl && (
+      ) : (
+        <div className="flex flex-col items-center">
           <audio 
             ref={audioRef} 
-            src={audioUrl} 
-            onEnded={handleAudioEnd} 
-            className="hidden" 
+            src={audioUrl!} 
+            onEnded={() => setIsPlaying(false)}
+            className="hidden"
           />
-        )}
-        
-        {/* Controls */}
-        <div className="flex flex-wrap gap-3 justify-center">
-          {!isRecording && !audioUrl && (
-            <Button 
-              onClick={startRecording}
-              variant="default"
-              size="lg"
-              className="bg-red-600 hover:bg-red-700"
-            >
-              <Mic className="h-5 w-5 mr-2" />
-              Start Recording
+          <div className="text-lg font-semibold mb-4">Recording Complete</div>
+          <div className="flex items-center space-x-4">
+            <Button onClick={togglePlay} size="icon" className="rounded-full w-14 h-14">
+              {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
             </Button>
-          )}
-          
-          {isRecording && (
-            <Button 
-              onClick={stopRecording}
-              variant="outline"
-              size="lg"
-              className="border-red-500 text-red-500 hover:bg-red-50"
-            >
-              <Square className="h-4 w-4 mr-2" />
-              Stop
+            <Button onClick={handleCancel} variant="outline" size="icon" className="rounded-full w-14 h-14">
+              <Trash2 className="h-6 w-6" />
             </Button>
-          )}
-          
-          {audioUrl && (
-            <>
-              <Button 
-                onClick={playRecording}
-                variant="outline"
-                size="sm"
-              >
-                {isPlaying ? (
-                  <>
-                    <Pause className="h-4 w-4 mr-1" />
-                    Pause
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-1" />
-                    Play
-                  </>
-                )}
-              </Button>
-              
-              <Button 
-                onClick={deleteRecording}
-                variant="outline"
-                size="sm"
-                className="border-red-500 text-red-500 hover:bg-red-50"
-              >
-                <Trash2 className="h-4 w-4 mr-1" />
-                Delete
-              </Button>
-              
-              <Button 
-                onClick={startRecording}
-                variant="outline"
-                size="sm"
-              >
-                <Mic className="h-4 w-4 mr-1" />
-                Record Again
-              </Button>
-              
-              <Button 
-                onClick={handleSaveRecording}
-                variant="default"
-                size="sm"
-                disabled={isUploading}
-                className="ml-auto"
-              >
-                {isUploading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                    Uploading... {uploadProgress}%
-                  </>
-                ) : (
-                  'Use This Recording'
-                )}
-              </Button>
-            </>
-          )}
-          
-          {onCancel && !isRecording && !isUploading && (
-            <Button 
-              onClick={onCancel}
-              variant="ghost"
-              size="sm"
-              className="text-gray-500"
-            >
-              Cancel
-            </Button>
-          )}
+          </div>
+          <p className="text-sm text-muted-foreground mt-4">Preview or discard your recording.</p>
         </div>
-      </div>
+      )}
     </div>
   );
 }

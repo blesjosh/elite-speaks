@@ -118,7 +118,8 @@ export default function AdminTopicsPage() {
         fetchTopics()
       }
     }
-  }, [user, loading, isAdmin, router])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, loading, isAdmin])
   
   const handleCreateTopic = async () => {
     try {
@@ -145,10 +146,14 @@ export default function AdminTopicsPage() {
       
       if (error) throw error
       
-      // Close the dialog and refresh topics
+      // Instead of refetching, update state locally
+      if (data) {
+        setTopics(prevTopics => [data[0], ...prevTopics])
+      }
+      
+      // Close the dialog and reset form
       setIsDialogOpen(false)
       resetForm()
-      fetchTopics()
       
       alert('Topic created successfully!')
     } catch (error) {
@@ -182,12 +187,18 @@ export default function AdminTopicsPage() {
       
       if (error) throw error
       
+      // Instead of refetching, update state locally
+      if (data) {
+        setTopics(prevTopics => 
+          prevTopics.map(t => t.id === currentTopic.id ? data[0] : t)
+        )
+      }
+      
       // Close the dialog and refresh topics
       setIsDialogOpen(false)
       setIsEditMode(false)
       setCurrentTopic(null)
       resetForm()
-      fetchTopics()
       
       alert('Topic updated successfully!')
     } catch (error) {
@@ -207,8 +218,8 @@ export default function AdminTopicsPage() {
       
       if (error) throw error
       
-      // Refresh topics
-      fetchTopics()
+      // Instead of refetching, update state locally
+      setTopics(prevTopics => prevTopics.filter(t => t.id !== id))
       
       alert('Topic deleted successfully!')
     } catch (error) {
@@ -415,7 +426,7 @@ export default function AdminTopicsPage() {
                         id="scheduled"
                         type="date"
                         value={formData.scheduled_for}
-                        onChange={(e) => handleFormChange('scheduled_for', new Date(e.target.value))}
+                        onChange={(e) => handleFormChange('scheduled_for', e.target.value)}
                         className="col-span-3"
                       />
                     </div>
@@ -428,7 +439,7 @@ export default function AdminTopicsPage() {
                         id="expires"
                         type="date"
                         value={formData.expires_at}
-                        onChange={(e) => handleFormChange('expires_at', e.target.value ? new Date(e.target.value) : null)}
+                        onChange={(e) => handleFormChange('expires_at', e.target.value)}
                         className="col-span-3"
                         placeholder="Optional expiration date"
                       />
@@ -548,7 +559,7 @@ interface TopicsTableProps {
   getDifficultyBadge: (level: string) => React.ReactNode
 }
 
-function TopicsTable({ topics, onEdit, onDelete, getStatusBadge, getDifficultyBadge }: TopicsTableProps) {
+const TopicsTable = React.memo(function TopicsTable({ topics, onEdit, onDelete, getStatusBadge, getDifficultyBadge }: TopicsTableProps) {
   // Ensure topics is always an array
   const topicsArray = Array.isArray(topics) ? topics : [];
   
@@ -619,11 +630,11 @@ function TopicsTable({ topics, onEdit, onDelete, getStatusBadge, getDifficultyBa
                     </div>
                   </TableCell>
                 </TableRow>
-              );
+              )
             })}
           </TableBody>
         </Table>
       </CardContent>
     </Card>
   )
-}
+})

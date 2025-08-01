@@ -1,26 +1,48 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse, NextRequest } from "next/server";
+import requestQueue from "@/lib/requestQueue";
 
+/**
+ * Expected request data structure for the evaluation endpoint
+ */
 interface RequestData {
+  /** The speech transcript to be evaluated */
   transcript: string;
+  /** Optional topic that the speaker was supposed to address */
   topic?: string;
 }
 
+/**
+ * Structure of the evaluation result from the AI model
+ */
 interface EvaluationResult {
+  /** Overall score out of 100 */
   overallScore: number;
+  /** Assessment of speaker confidence */
   confidence: string;
+  /** Analysis of filler words */
   fillerWords: {
     count: number;
     words: string[];
   };
+  /** Feedback on grammar usage */
   grammarFeedback: string;
+  /** Suggestions for better phrasing */
   alternativePhrasing: Array<{
     original: string;
     suggested: string;
   }>;
+  /** Score for staying on topic (null if no topic was assigned) */
   topicAdherence: number | null;
 }
 
+/**
+ * Type guard to verify that the data returned from the AI
+ * matches the expected EvaluationResult structure
+ * 
+ * @param data - The data to validate
+ * @returns A type predicate indicating if data is a valid EvaluationResult
+ */
 function isValidEvaluation(data: unknown): data is EvaluationResult {
   if (!data || typeof data !== 'object') return false;
   const evaluation = data as Partial<EvaluationResult>;
@@ -34,8 +56,29 @@ function isValidEvaluation(data: unknown): data is EvaluationResult {
   );
 }
 
+/**
+ * API endpoint for evaluating speech transcriptions using AI
+ * 
+ * This route:
+ * 1. Manages request queueing to handle API rate limits
+ * 2. Processes speech transcriptions via Gemini AI
+ * 3. Returns structured evaluation data
+ * 
+ * @param request - The incoming HTTP request
+ * @returns JSON response with evaluation data or error information
+ */
 export async function POST(request: NextRequest) {
   try {
+    // Check queue size first - if it's too large, immediately return a friendly queue message
+    // This provides backpressure to prevent overwhelming the queue
+    if (requestQueue.queueLength > 5) {
+      console.log(`Queue size limit reached (${requestQueue.queueLength} pending requests)`);
+      return NextResponse.json({ 
+        error: "The evaluation service is experiencing high demand right now. Please try again in a few moments.",
+        inQueue: true
+      }, { status: 429 });
+    }
+
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) {
       console.error("Gemini API key is not set in environment variables");
@@ -56,7 +99,7 @@ export async function POST(request: NextRequest) {
 
     const prompt = `
       As an expert English communication coach, analyze the following transcript. Provide a detailed evaluation in a valid JSON format.
-      The user is practicing their communication skills.
+      The user is practicing their communication skills and give very low score if the user is speaking something out of the given topic.
 
       ${data.topic ? `Speaking Topic: "${data.topic}"` : "No specific topic was assigned."}
 
@@ -74,22 +117,59 @@ export async function POST(request: NextRequest) {
     `;
 
     try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const aiResponse = response.text();
+      // Add the API call to the queue to manage rate limits
+      const aiResponseTask = async () => {
+        console.log("Processing Gemini API request from queue...");
+        
+        try {
+          // Make the actual API call to Gemini
+          const result = await model.generateContent(prompt);
+          const response = await result.response;
+          return response.text();
+        } catch (apiError: any) {
+          // Enhanced error handling for API-specific errors
+          console.error(`Gemini API error: ${apiError.message || 'Unknown error'}`);
+          
+          // Add more context to the error for better debugging
+          if (apiError.message) {
+            apiError.message = `Gemini API: ${apiError.message}`;
+          }
+          
+          throw apiError;
+        }
+      };
+
+      // Wait for the queue to process this request (with automatic retries)
+      const aiResponse = await requestQueue.enqueue(aiResponseTask);
       
       // Remove any markdown code block syntax and clean up the response
       const cleanedJson = aiResponse.replace(/```json\n|```json|```\n|```/g, "").trim();
       let parsedData;
       
       try {
+        // Attempt to parse the cleaned response as JSON
         parsedData = JSON.parse(cleanedJson);
       } catch (jsonError) {
-        console.error('Failed to parse JSON:', cleanedJson);
+        console.error('Failed to parse AI response as JSON:', cleanedJson);
+        
+        // Check for common rate limit or quota messages in the raw response
+        // These might be returned as plain text errors instead of JSON
+        if (aiResponse.toLowerCase().includes('quota exceeded') || 
+            aiResponse.toLowerCase().includes('rate limit') || 
+            aiResponse.toLowerCase().includes('too many requests')) {
+          
+          // Return a user-friendly message and indicate this request can be retried later
+          return NextResponse.json({
+            error: 'The evaluation service is currently at capacity. Please try again in a few moments.',
+            inQueue: true
+          }, { status: 429 });
+        }
+        
         throw new Error('AI response was not valid JSON');
       }
 
       if (!isValidEvaluation(parsedData)) {
+        console.error('Invalid evaluation format:', parsedData);
         throw new Error('Invalid evaluation format from AI response');
       }
 

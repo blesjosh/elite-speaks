@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     const transcript = result.results.channels[0].alternatives[0].transcript;
     
     return NextResponse.json({
-      transcript,
+      transcription: transcript,
       confidence: result.results.channels[0].alternatives[0].confidence,
       duration: result.metadata?.duration
     });
@@ -69,10 +69,6 @@ export async function POST(request: NextRequest) {
         error: err instanceof Error ? err.message : "Failed to transcribe audio",
         details: err
       },
-      { status: 500 }
-    );
-    return NextResponse.json(
-      { error: "An unexpected error occurred" },
       { status: 500 }
     );
   }
