@@ -37,7 +37,9 @@ export default function AdminStatusChecker() {
 
   const refreshAdminStatus = async () => {
     setChecking(true)
-    await checkAdminStatus()
+    if (user) {
+      await checkAdminStatus(user.id)
+    }
     await checkDirectly()
     setChecking(false)
   }
